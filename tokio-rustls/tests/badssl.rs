@@ -15,7 +15,7 @@ async fn get(
     let input = format!("GET / HTTP/1.0\r\nHost: {}\r\n\r\n", domain);
 
     let addr = (domain, port).to_socket_addrs()?.next().unwrap();
-    let domain = webpki::DNSNameRef::try_from_ascii_str(&domain).unwrap();
+    let domain = webpki::DnsNameRef::try_from_ascii_str(&domain).unwrap();
     let mut buf = Vec::new();
 
     let stream = TcpStream::connect(&addr).await?;
@@ -29,10 +29,9 @@ async fn get(
 
 #[tokio::test]
 async fn test_tls12() -> io::Result<()> {
-    let mut config = ClientConfig::new();
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    let mut config = ClientConfig::new(root_store, &[], rustls::DEFAULT_CIPHERSUITES);
     config.versions = vec![rustls::ProtocolVersion::TLSv1_2];
     let config = Arc::new(config);
     let domain = "tls-v1-2.badssl.com";
@@ -52,10 +51,9 @@ fn test_tls13() {
 
 #[tokio::test]
 async fn test_modern() -> io::Result<()> {
-    let mut config = ClientConfig::new();
-    config
-        .root_store
-        .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+    let config = ClientConfig::new(root_store, &[], rustls::DEFAULT_CIPHERSUITES);
     let config = Arc::new(config);
     let domain = "mozilla-modern.badssl.com";
 

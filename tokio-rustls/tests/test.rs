@@ -1,6 +1,6 @@
 use futures_util::future::TryFutureExt;
 use lazy_static::lazy_static;
-use rustls::internal::pemfile::{certs, rsa_private_keys};
+use rustls_pemfile::{certs, rsa_private_keys};
 use rustls::{ClientConfig, ServerConfig};
 use std::io::{BufReader, Cursor};
 use std::net::SocketAddr;
@@ -18,12 +18,15 @@ const RSA: &str = include_str!("end.rsa");
 
 lazy_static! {
     static ref TEST_SERVER: (SocketAddr, &'static str, &'static str) = {
-        let cert = certs(&mut BufReader::new(Cursor::new(CERT))).unwrap();
+        let cert = certs(&mut BufReader::new(Cursor::new(CERT))).unwrap()
+            .into_iter()
+            .map(rustls::Certificate)
+            .collect::<Vec<_>>();
         let mut keys = rsa_private_keys(&mut BufReader::new(Cursor::new(RSA))).unwrap();
 
         let mut config = ServerConfig::new(rustls::NoClientAuth::new());
         config
-            .set_single_cert(cert, keys.pop().unwrap())
+            .set_single_cert(cert, rustls::PrivateKey(keys.pop().unwrap()))
             .expect("invalid key or certificate");
         let acceptor = TlsAcceptor::from(Arc::new(config));
 
@@ -77,7 +80,7 @@ fn start_server() -> &'static (SocketAddr, &'static str, &'static str) {
 async fn start_client(addr: SocketAddr, domain: &str, config: Arc<ClientConfig>) -> io::Result<()> {
     const FILE: &'static [u8] = include_bytes!("../README.md");
 
-    let domain = webpki::DNSNameRef::try_from_ascii_str(domain).unwrap();
+    let domain = webpki::DnsNameRef::try_from_ascii_str(domain).unwrap();
     let config = TlsConnector::from(config);
     let mut buf = vec![0; FILE.len()];
 
@@ -102,9 +105,10 @@ async fn pass() -> io::Result<()> {
     use std::time::*;
     tokio::time::sleep(Duration::from_secs(1)).await;
 
-    let mut config = ClientConfig::new();
+    let mut root_store = rustls::RootCertStore::empty();
     let mut chain = BufReader::new(Cursor::new(chain));
-    config.root_store.add_pem_file(&mut chain).unwrap();
+    root_store.add_parsable_certificates(&certs(&mut chain).unwrap());
+    let config = ClientConfig::new(root_store, &[], rustls::DEFAULT_CIPHERSUITES);
     let config = Arc::new(config);
 
     start_client(addr.clone(), domain, config.clone()).await?;
@@ -116,9 +120,10 @@ async fn pass() -> io::Result<()> {
 async fn fail() -> io::Result<()> {
     let (addr, domain, chain) = start_server();
 
-    let mut config = ClientConfig::new();
+    let mut root_store = rustls::RootCertStore::empty();
     let mut chain = BufReader::new(Cursor::new(chain));
-    config.root_store.add_pem_file(&mut chain).unwrap();
+    root_store.add_parsable_certificates(&certs(&mut chain).unwrap());
+    let config = ClientConfig::new(root_store, &[], rustls::DEFAULT_CIPHERSUITES);
     let config = Arc::new(config);
 
     assert_ne!(domain, &"google.com");
