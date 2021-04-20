@@ -109,14 +109,8 @@ impl<'a, IO: AsyncRead + AsyncWrite + Unpin, C: Connection> Stream<'a, IO, C> {
             Err(err) => return Poll::Ready(Err(err)),
         };
 
-        self.connection.process_new_packets().map_err(|err| {
-            // In case we have an alert to send describing this error,
-            // try a last-gasp write -- but don't predate the primary
-            // error.
-            let _ = self.write_io(cx);
-
-            io::Error::new(io::ErrorKind::InvalidData, err)
-        })?;
+        self.connection.process_new_packets()
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
         Poll::Ready(Ok(n))
     }

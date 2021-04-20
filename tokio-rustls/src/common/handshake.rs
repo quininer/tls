@@ -48,25 +48,40 @@ where
             let (state, io, connection) = stream.get_mut();
             let mut tls_stream = Stream::new(io, connection).set_eof(!state.readable());
 
-            macro_rules! try_poll {
-                ( $e:expr ) => {
-                    match $e {
-                        Poll::Ready(Ok(_)) => (),
-                        Poll::Ready(Err(err)) => return Poll::Ready(Err((err, stream.into_io()))),
-                        Poll::Pending => {
-                            *this = MidHandshake::Handshaking(Ok(stream));
-                            return Poll::Pending;
-                        }
-                    }
-                };
-            }
-
             while tls_stream.connection.is_handshaking() {
-                try_poll!(tls_stream.handshake(cx));
+                match tls_stream.handshake(cx) {
+                    Poll::Ready(Ok(_)) => (),
+                    Poll::Ready(Err(err)) => {
+                        // In case we have an alert to send describing this error,
+                        // try a last-gasp write -- but don't predate the primary
+                        // error.
+                        //
+                        // see https://github.com/quininer/tokio-rustls/issues/12
+                        if err.kind() == io::ErrorKind::Other
+                            && (&err as &dyn std::error::Error).is::<rustls::Error>()
+                            && tls_stream.connection.wants_write()
+                        {
+                            let _ = tls_stream.write_io(cx);
+                        }
+
+                        return Poll::Ready(Err((err, stream.into_io())));
+                    },
+                    Poll::Pending => {
+                        *this = MidHandshake::Handshaking(Ok(stream));
+                        return Poll::Pending;
+                    }
+                }
             }
 
             while tls_stream.connection.wants_write() {
-                try_poll!(tls_stream.write_io(cx));
+                match tls_stream.write_io(cx) {
+                    Poll::Ready(Ok(_)) => (),
+                    Poll::Ready(Err(err)) => return Poll::Ready(Err((err, stream.into_io()))),
+                    Poll::Pending => {
+                        *this = MidHandshake::Handshaking(Ok(stream));
+                        return Poll::Pending;
+                    }
+                }
             }
         }
 
