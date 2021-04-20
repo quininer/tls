@@ -14,14 +14,14 @@ mod common;
 pub mod server;
 
 use common::{MidHandshake, Stream, TlsState};
-use rustls::{ClientConfig, ClientSession, ServerConfig, ServerSession, Session};
+use rustls::{ClientConfig, ClientConnection, ServerConfig, ServerConnection, Connection};
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use webpki::DNSNameRef;
+use webpki::DnsNameRef;
 
 pub use rustls;
 pub use webpki;
@@ -68,35 +68,41 @@ impl TlsConnector {
     }
 
     #[inline]
-    pub fn connect<IO>(&self, domain: DNSNameRef, stream: IO) -> Connect<IO>
+    pub fn connect<IO>(&self, domain: DnsNameRef, stream: IO) -> Connect<IO>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
     {
         self.connect_with(domain, stream, |_| ())
     }
 
-    pub fn connect_with<IO, F>(&self, domain: DNSNameRef, stream: IO, f: F) -> Connect<IO>
+    pub fn connect_with<IO, F>(&self, domain: DnsNameRef, stream: IO, f: F) -> Connect<IO>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
-        F: FnOnce(&mut ClientSession),
+        F: FnOnce(&mut ClientConnection),
     {
-        let mut session = ClientSession::new(&self.inner, domain);
-        f(&mut session);
+        let mut session = ClientConnection::new(&self.inner, domain);
 
-        Connect(MidHandshake::Handshaking(client::TlsStream {
-            io: stream,
+        if let Ok(session) = session.as_mut() {
+            f(session);
+        }
 
-            #[cfg(not(feature = "early-data"))]
-            state: TlsState::Stream,
+        Connect(MidHandshake::Handshaking(match session {
+            Ok(session) => Ok(client::TlsStream {
+                io: stream,
 
-            #[cfg(feature = "early-data")]
-            state: if self.early_data && session.early_data().is_some() {
-                TlsState::EarlyData(0, Vec::new())
-            } else {
-                TlsState::Stream
-            },
+                #[cfg(not(feature = "early-data"))]
+                state: TlsState::Stream,
 
-            session,
+                #[cfg(feature = "early-data")]
+                state: if self.early_data && session.early_data().is_some() {
+                    TlsState::EarlyData(0, Vec::new())
+                } else {
+                    TlsState::Stream
+                },
+
+                session,
+            }),
+            Err(err) => Err((stream, err))
         }))
     }
 }
@@ -113,16 +119,16 @@ impl TlsAcceptor {
     pub fn accept_with<IO, F>(&self, stream: IO, f: F) -> Accept<IO>
     where
         IO: AsyncRead + AsyncWrite + Unpin,
-        F: FnOnce(&mut ServerSession),
+        F: FnOnce(&mut ServerConnection),
     {
-        let mut session = ServerSession::new(&self.inner);
+        let mut session = ServerConnection::new(&self.inner);
         f(&mut session);
 
-        Accept(MidHandshake::Handshaking(server::TlsStream {
+        Accept(MidHandshake::Handshaking(Ok(server::TlsStream {
             session,
             io: stream,
             state: TlsState::Stream,
-        }))
+        })))
     }
 }
 
@@ -201,7 +207,7 @@ pub enum TlsStream<T> {
 }
 
 impl<T> TlsStream<T> {
-    pub fn get_ref(&self) -> (&T, &dyn Session) {
+    pub fn get_ref(&self) -> (&T, &dyn Connection) {
         use TlsStream::*;
         match self {
             Client(io) => {
@@ -215,7 +221,7 @@ impl<T> TlsStream<T> {
         }
     }
 
-    pub fn get_mut(&mut self) -> (&mut T, &mut dyn Session) {
+    pub fn get_mut(&mut self) -> (&mut T, &mut dyn Connection) {
         use TlsStream::*;
         match self {
             Client(io) => {

@@ -1,5 +1,5 @@
 use crate::common::{Stream, TlsState};
-use rustls::Session;
+use rustls::Connection;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -15,8 +15,11 @@ pub(crate) trait IoSession {
     fn into_io(self) -> Self::Io;
 }
 
-pub(crate) enum MidHandshake<IS> {
-    Handshaking(IS),
+pub(crate) enum MidHandshake<IS>
+where
+    IS: IoSession
+{
+    Handshaking(Result<IS, (IS::Io, rustls::Error)>),
     End,
 }
 
@@ -24,7 +27,7 @@ impl<IS> Future for MidHandshake<IS>
 where
     IS: IoSession + Unpin,
     IS::Io: AsyncRead + AsyncWrite + Unpin,
-    IS::Session: Session + Unpin,
+    IS::Session: Connection + Unpin,
 {
     type Output = Result<IS, (io::Error, IS::Io)>;
 
@@ -32,10 +35,13 @@ where
         let this = self.get_mut();
 
         let mut stream =
-            if let MidHandshake::Handshaking(stream) = mem::replace(this, MidHandshake::End) {
-                stream
-            } else {
-                panic!("unexpected polling after handshake")
+            match mem::replace(this, MidHandshake::End) {
+                MidHandshake::Handshaking(Ok(stream)) => stream,
+                MidHandshake::Handshaking(Err((stream, err))) => return Poll::Ready(Err((
+                    io::Error::new(io::ErrorKind::Other, err),
+                    stream
+                ))),
+                _ => panic!("unexpected polling after handshake")
             };
 
         if !stream.skip_handshake() {
@@ -48,7 +54,7 @@ where
                         Poll::Ready(Ok(_)) => (),
                         Poll::Ready(Err(err)) => return Poll::Ready(Err((err, stream.into_io()))),
                         Poll::Pending => {
-                            *this = MidHandshake::Handshaking(stream);
+                            *this = MidHandshake::Handshaking(Ok(stream));
                             return Poll::Pending;
                         }
                     }
