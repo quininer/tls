@@ -117,7 +117,7 @@ impl AsyncWrite for Eof {
 }
 
 #[tokio::test]
-async fn stream_good() -> io::Result<()> {
+async fn stream_good() -> anyhow::Result<()> {
     const FILE: &'static [u8] = include_bytes!("../../README.md");
 
     let (mut server, mut client) = make_pair();
@@ -132,14 +132,15 @@ async fn stream_good() -> io::Result<()> {
         stream.read_to_end(&mut buf).await?;
         assert_eq!(buf, FILE);
         stream.write_all(b"Hello World!").await?;
-        stream.flush().await?;
+        stream.connection.send_close_notify();
+        stream.shutdown().await?;
     }
 
     let mut buf = String::new();
     server.reader().read_to_string(&mut buf)?;
     assert_eq!(buf, "Hello World!");
 
-    Ok(()) as io::Result<()>
+    Ok(())
 }
 
 #[tokio::test]
@@ -165,7 +166,7 @@ async fn stream_bad() -> io::Result<()> {
     let ret = stream.as_mut_pin().poll_write(&mut cx, &[0x01]);
     assert!(ret.is_pending());
 
-    Ok(()) as io::Result<()>
+    Ok(())
 }
 
 #[tokio::test]
@@ -186,7 +187,7 @@ async fn stream_handshake() -> io::Result<()> {
     assert!(!server.is_handshaking());
     assert!(!client.is_handshaking());
 
-    Ok(()) as io::Result<()>
+    Ok(())
 }
 
 #[tokio::test]
@@ -203,11 +204,11 @@ async fn stream_handshake_eof() -> io::Result<()> {
         Poll::Ready(Err(io::ErrorKind::UnexpectedEof))
     );
 
-    Ok(()) as io::Result<()>
+    Ok(())
 }
 
 #[tokio::test]
-async fn stream_eof() -> io::Result<()> {
+async fn stream_eof() -> anyhow::Result<()> {
     let (mut server, mut client) = make_pair();
     poll_fn(|cx| do_handshake(&mut client, &mut server, cx)).await?;
 
@@ -218,7 +219,7 @@ async fn stream_eof() -> io::Result<()> {
     stream.read_to_end(&mut buf).await?;
     assert_eq!(buf.len(), 0);
 
-    Ok(()) as io::Result<()>
+    Ok(())
 }
 
 fn make_pair() -> (ServerConnection, ClientConnection) {

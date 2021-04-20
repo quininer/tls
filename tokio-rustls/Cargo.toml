@@ -21,6 +21,7 @@ early-data = []
 dangerous_configuration = ["rustls/dangerous_configuration"]
 
 [dev-dependencies]
+anyhow = "1"
 tokio = { version = "1.0", features = ["full"] }
 rustls-pemfile = "0.2"
 futures-util = "0.3.1"

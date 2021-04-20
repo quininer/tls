@@ -226,7 +226,7 @@ impl<'a, IO: AsyncRead + AsyncWrite + Unpin, C: Connection> AsyncRead for Stream
             let mut would_block = false;
 
             // read a packet
-            while self.connection.wants_read() {
+            while !self.eof && self.connection.wants_read() {
                 match self.read_io(cx) {
                     Poll::Ready(Ok(0)) => {
                         self.eof = true;
@@ -247,17 +247,19 @@ impl<'a, IO: AsyncRead + AsyncWrite + Unpin, C: Connection> AsyncRead for Stream
                     buf.advance(n);
 
                     if self.eof || would_block {
-                        break;
+                        break
                     } else {
-                        continue;
+                        continue
                     }
                 }
-                Err(ref err)
-                    if err.kind() == io::ErrorKind::ConnectionAborted
-                        && prev != buf.remaining() =>
-                {
-                    break
-                }
+                Err(ref err) if err.kind() == io::ErrorKind::WouldBlock =>
+                    if prev == buf.remaining() && would_block {
+                        Poll::Pending
+                    } else if self.eof || would_block {
+                        break
+                    } else {
+                        continue
+                    },
                 Err(err) => Poll::Ready(Err(err)),
             };
         }
