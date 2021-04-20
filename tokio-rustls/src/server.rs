@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::IoSession;
+use crate::common::IoConnection;
 use rustls::Connection;
 
 /// A wrapper around an underlying raw stream which implements the TLS or SSL
@@ -7,30 +7,30 @@ use rustls::Connection;
 #[derive(Debug)]
 pub struct TlsStream<IO> {
     pub(crate) io: IO,
-    pub(crate) session: ServerConnection,
+    pub(crate) connection: ServerConnection,
     pub(crate) state: TlsState,
 }
 
 impl<IO> TlsStream<IO> {
     #[inline]
     pub fn get_ref(&self) -> (&IO, &ServerConnection) {
-        (&self.io, &self.session)
+        (&self.io, &self.connection)
     }
 
     #[inline]
     pub fn get_mut(&mut self) -> (&mut IO, &mut ServerConnection) {
-        (&mut self.io, &mut self.session)
+        (&mut self.io, &mut self.connection)
     }
 
     #[inline]
     pub fn into_inner(self) -> (IO, ServerConnection) {
-        (self.io, self.session)
+        (self.io, self.connection)
     }
 }
 
-impl<IO> IoSession for TlsStream<IO> {
+impl<IO> IoConnection for TlsStream<IO> {
     type Io = IO;
-    type Session = ServerConnection;
+    type Connection = ServerConnection;
 
     #[inline]
     fn skip_handshake(&self) -> bool {
@@ -38,8 +38,8 @@ impl<IO> IoSession for TlsStream<IO> {
     }
 
     #[inline]
-    fn get_mut(&mut self) -> (&mut TlsState, &mut Self::Io, &mut Self::Session) {
-        (&mut self.state, &mut self.io, &mut self.session)
+    fn get_mut(&mut self) -> (&mut TlsState, &mut Self::Io, &mut Self::Connection) {
+        (&mut self.state, &mut self.io, &mut self.connection)
     }
 
     #[inline]
@@ -59,7 +59,7 @@ where
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
 
         match &this.state {
             TlsState::Stream | TlsState::WriteShutdown => {
@@ -101,26 +101,26 @@ where
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
         stream.as_mut_pin().poll_write(cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
         stream.as_mut_pin().poll_flush(cx)
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if self.state.writeable() {
-            self.session.send_close_notify();
+            self.connection.send_close_notify();
             self.state.shutdown_write();
         }
 
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
         stream.as_mut_pin().poll_shutdown(cx)
     }
 }

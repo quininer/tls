@@ -80,27 +80,27 @@ impl TlsConnector {
         IO: AsyncRead + AsyncWrite + Unpin,
         F: FnOnce(&mut ClientConnection),
     {
-        let mut session = ClientConnection::new(&self.inner, domain);
+        let mut connection = ClientConnection::new(&self.inner, domain);
 
-        if let Ok(session) = session.as_mut() {
-            f(session);
+        if let Ok(connection) = connection.as_mut() {
+            f(connection);
         }
 
-        Connect(MidHandshake::Handshaking(match session {
-            Ok(session) => Ok(client::TlsStream {
+        Connect(MidHandshake::Handshaking(match connection {
+            Ok(connection) => Ok(client::TlsStream {
                 io: stream,
 
                 #[cfg(not(feature = "early-data"))]
                 state: TlsState::Stream,
 
                 #[cfg(feature = "early-data")]
-                state: if self.early_data && session.early_data().is_some() {
+                state: if self.early_data && connection.early_data().is_some() {
                     TlsState::EarlyData(0, Vec::new())
                 } else {
                     TlsState::Stream
                 },
 
-                session,
+                connection,
             }),
             Err(err) => Err((stream, err))
         }))
@@ -121,11 +121,11 @@ impl TlsAcceptor {
         IO: AsyncRead + AsyncWrite + Unpin,
         F: FnOnce(&mut ServerConnection),
     {
-        let mut session = ServerConnection::new(&self.inner);
-        f(&mut session);
+        let mut connection = ServerConnection::new(&self.inner);
+        f(&mut connection);
 
         Accept(MidHandshake::Handshaking(Ok(server::TlsStream {
-            session,
+            connection,
             io: stream,
             state: TlsState::Stream,
         })))
@@ -211,12 +211,12 @@ impl<T> TlsStream<T> {
         use TlsStream::*;
         match self {
             Client(io) => {
-                let (io, session) = io.get_ref();
-                (io, &*session)
+                let (io, connection) = io.get_ref();
+                (io, &*connection)
             }
             Server(io) => {
-                let (io, session) = io.get_ref();
-                (io, &*session)
+                let (io, connection) = io.get_ref();
+                (io, &*connection)
             }
         }
     }
@@ -225,12 +225,12 @@ impl<T> TlsStream<T> {
         use TlsStream::*;
         match self {
             Client(io) => {
-                let (io, session) = io.get_mut();
-                (io, &mut *session)
+                let (io, connection) = io.get_mut();
+                (io, &mut *connection)
             }
             Server(io) => {
-                let (io, session) = io.get_mut();
-                (io, &mut *session)
+                let (io, connection) = io.get_mut();
+                (io, &mut *connection)
             }
         }
     }

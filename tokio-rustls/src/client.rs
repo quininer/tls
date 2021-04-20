@@ -1,5 +1,5 @@
 use super::*;
-use crate::common::IoSession;
+use crate::common::IoConnection;
 use rustls::Connection;
 
 /// A wrapper around an underlying raw stream which implements the TLS or SSL
@@ -7,30 +7,30 @@ use rustls::Connection;
 #[derive(Debug)]
 pub struct TlsStream<IO> {
     pub(crate) io: IO,
-    pub(crate) session: ClientConnection,
+    pub(crate) connection: ClientConnection,
     pub(crate) state: TlsState,
 }
 
 impl<IO> TlsStream<IO> {
     #[inline]
     pub fn get_ref(&self) -> (&IO, &ClientConnection) {
-        (&self.io, &self.session)
+        (&self.io, &self.connection)
     }
 
     #[inline]
     pub fn get_mut(&mut self) -> (&mut IO, &mut ClientConnection) {
-        (&mut self.io, &mut self.session)
+        (&mut self.io, &mut self.connection)
     }
 
     #[inline]
     pub fn into_inner(self) -> (IO, ClientConnection) {
-        (self.io, self.session)
+        (self.io, self.connection)
     }
 }
 
-impl<IO> IoSession for TlsStream<IO> {
+impl<IO> IoConnection for TlsStream<IO> {
     type Io = IO;
-    type Session = ClientConnection;
+    type Connection = ClientConnection;
 
     #[inline]
     fn skip_handshake(&self) -> bool {
@@ -38,8 +38,8 @@ impl<IO> IoSession for TlsStream<IO> {
     }
 
     #[inline]
-    fn get_mut(&mut self) -> (&mut TlsState, &mut Self::Io, &mut Self::Session) {
-        (&mut self.state, &mut self.io, &mut self.session)
+    fn get_mut(&mut self) -> (&mut TlsState, &mut Self::Io, &mut Self::Connection) {
+        (&mut self.state, &mut self.io, &mut self.connection)
     }
 
     #[inline]
@@ -63,7 +63,7 @@ where
             TlsState::Stream | TlsState::WriteShutdown => {
                 let this = self.get_mut();
                 let mut stream =
-                    Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+                    Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
                 let prev = buf.remaining();
 
                 match stream.as_mut_pin().poll_read(cx, buf) {
@@ -99,7 +99,7 @@ where
     ) -> Poll<io::Result<usize>> {
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
 
         #[allow(clippy::match_single_binding)]
         match this.state {
@@ -108,7 +108,7 @@ where
                 use std::io::Write;
 
                 // write early data
-                if let Some(mut early_data) = stream.session.early_data() {
+                if let Some(mut early_data) = stream.connection.early_data() {
                     let len = match early_data.write(buf) {
                         Ok(n) => n,
                         Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => {
@@ -123,12 +123,12 @@ where
                 }
 
                 // complete handshake
-                while stream.session.is_handshaking() {
+                while stream.connection.is_handshaking() {
                     ready!(stream.handshake(cx))?;
                 }
 
                 // write early data (fallback)
-                if !stream.session.is_early_data_accepted() {
+                if !stream.connection.is_early_data_accepted() {
                     while *pos < data.len() {
                         let len = ready!(stream.as_mut_pin().poll_write(cx, &data[*pos..]))?;
                         *pos += len;
@@ -146,18 +146,18 @@ where
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
 
         #[cfg(feature = "early-data")]
         {
             if let TlsState::EarlyData(ref mut pos, ref mut data) = this.state {
                 // complete handshake
-                while stream.session.is_handshaking() {
+                while stream.connection.is_handshaking() {
                     ready!(stream.handshake(cx))?;
                 }
 
                 // write early data (fallback)
-                if !stream.session.is_early_data_accepted() {
+                if !stream.connection.is_early_data_accepted() {
                     while *pos < data.len() {
                         let len = ready!(stream.as_mut_pin().poll_write(cx, &data[*pos..]))?;
                         *pos += len;
@@ -173,7 +173,7 @@ where
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         if self.state.writeable() {
-            self.session.send_close_notify();
+            self.connection.send_close_notify();
             self.state.shutdown_write();
         }
 
@@ -187,7 +187,7 @@ where
 
         let this = self.get_mut();
         let mut stream =
-            Stream::new(&mut this.io, &mut this.session).set_eof(!this.state.readable());
+            Stream::new(&mut this.io, &mut this.connection).set_eof(!this.state.readable());
         stream.as_mut_pin().poll_shutdown(cx)
     }
 }
