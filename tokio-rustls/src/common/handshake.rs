@@ -58,7 +58,7 @@ where
                         //
                         // see https://github.com/quininer/tokio-rustls/issues/12
                         if err.kind() == io::ErrorKind::Other
-                            && (&err as &dyn std::error::Error).is::<rustls::Error>()
+                            && err.get_ref().map(|err| err.is::<rustls::Error>()).unwrap_or_default()
                             && tls_stream.connection.wants_write()
                         {
                             let _ = tls_stream.write_io(cx);
